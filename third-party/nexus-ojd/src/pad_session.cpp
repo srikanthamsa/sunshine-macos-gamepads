@@ -33,8 +33,6 @@ ConnectResult PadSession::start() {
       return {};
     }
     stop_requested_ = false;
-    needs_full_frame_ = true;
-    published_ = GamepadState{};
   }
 
   FeedConfig feed;
@@ -103,7 +101,6 @@ bool PadSession::reconnect_locked() {
       last_error_ = ConnectError::none;
       running_ = true;
       has_pending_ = false;
-      published_ = GamepadState{};
       return true;
     }
 
@@ -164,7 +161,6 @@ void PadSession::run() {
   while (true) {
     GamepadState state;
     bool send = false;
-    bool full = false;
     bool keepalive = false;
 
     {
@@ -187,8 +183,6 @@ void PadSession::run() {
       if (has_pending_) {
         state = pending_;
         has_pending_ = false;
-        full = needs_full_frame_;
-        needs_full_frame_ = false;
         send = true;
       } else if (now - last_send >= config_.keepalive_after) {
         keepalive = true;
@@ -196,25 +190,22 @@ void PadSession::run() {
     }
 
     if (send) {
-      Frame frame = full ? full_frame(state) : diff_frame(published_, state);
+      // OJD treats an omitted control as neutral, so every frame carries the whole
+      // state. A diff would drop a held stick axis whenever the other axis moved.
+      Frame frame = full_frame(state);
       if (!client_.send_frame(frame)) {
         if (!reconnect_locked()) {
           break;
         }
-        // The feed is back: republish absolute state so the new pad matches the
-        // physical controller instead of waiting for the next button change.
-        needs_full_frame_ = true;
         last_send = std::chrono::steady_clock::now();
         continue;
       }
-      published_ = state;
       last_send = std::chrono::steady_clock::now();
     } else if (keepalive) {
       if (!client_.send_keepalive()) {
         if (!reconnect_locked()) {
           break;
         }
-        needs_full_frame_ = true;
         last_send = std::chrono::steady_clock::now();
         continue;
       }

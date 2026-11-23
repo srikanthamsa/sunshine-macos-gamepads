@@ -88,13 +88,11 @@ class PadSession {
   std::condition_variable wake_;
 
   GamepadState pending_{};
-  GamepadState published_{};
   bool has_pending_ = false;
   bool stop_requested_ = false;
   bool running_ = false;
   ConnectError last_error_ = ConnectError::none;
   int reconnect_count_ = 0;
-  bool needs_full_frame_ = true;
 };
 
 /// Owns the sessions for a Sunshine stream's gamepad slots.
