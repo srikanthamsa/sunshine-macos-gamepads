@@ -848,6 +848,7 @@ namespace config {
     {},  // Windows requests a backend choice; macOS defaults to Virtual HID Broker.
     {},  // ojd_socket_path: empty disables the OpenJoystickDriver backend.
     {},  // ojd_token: empty disables the OpenJoystickDriver backend.
+    false,  // ojd_rumble: rumble from OpenJoystickDriver pads stays off unless enabled.
     true,  // back as touchpad click enabled for PlayStation-style gamepads
     true,  // client gamepads with motion events use PlayStation-style emulation
     true,  // client gamepads with touchpads use PlayStation-style emulation
@@ -1845,6 +1846,7 @@ namespace config {
     // specific error at session start rather than silently falling back.
     string_f(vars, "ojd_socket_path", input.ojd_socket_path);
     string_f(vars, "ojd_token", input.ojd_token);
+    bool_f(vars, "ojd_rumble", input.ojd_rumble);
 #ifdef _WIN32
     if (input.gamepad_driver == GAMEPAD_DRIVER_VIGEMBUS && input.gamepad != "auto"sv && input.gamepad != "x360"sv && input.gamepad != "ds4"sv) {
       BOOST_LOG(warning) << "Gamepad type '"sv << input.gamepad << "' is not supported by ViGEmBus; using automatic selection"sv;

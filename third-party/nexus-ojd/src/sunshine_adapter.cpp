@@ -7,6 +7,10 @@
 // The four functions here mirror the ones in src/platform/virtualhid_input.cpp
 // under the `#ifndef _WIN32` block. See INTEGRATION.md for the patch.
 #include "nexus/ojd/sunshine_adapter.hpp"
+
+#include <array>
+#include <mutex>
+
 #include "nexus/ojd/sunshine_bridge.hpp"
 
 // Sunshine. Included after the bridge so this file fails loudly if the bridge
@@ -41,8 +45,47 @@ static_assert(moonlight::touchpad_button == platf::TOUCHPAD_BUTTON);
 static_assert(moonlight::misc_button == platf::MISC_BUTTON);
 }  // namespace
 
+namespace {
+/// Where one pad's rumble goes: the owning session's feedback queue and the
+/// pad's index within that client, which is what Moonlight's messages carry.
+struct FeedbackRoute {
+  bool allocated = false;
+  std::uint8_t client_relative_index = 0;
+  FeedbackSink sink;
+  bool trigger_rumble = false;  ///< Last command moved the trigger motors.
+};
+
+std::mutex route_mutex;
+std::array<FeedbackRoute, kMaxVirtualPads> routes;
+std::once_flag rumble_handler_once;
+
+/// Runs on a pad's rumble thread. A stop (or the expiry PadSession synthesizes)
+/// arrives as set == false and zeroes every motor.
+void forward_rumble(int slot, const RumbleCommand &command) {
+  if (slot < 0 || slot >= kMaxVirtualPads) {
+    return;
+  }
+  std::lock_guard lock(route_mutex);
+  auto &route = routes[slot];
+  if (!route.allocated || !route.sink) {
+    return;
+  }
+
+  const auto value = [&command](std::uint16_t v) -> std::uint16_t { return command.set ? v : 0; };
+  route.sink(platf::gamepad_feedback_msg_t::make_rumble(
+      route.client_relative_index, value(command.low_frequency), value(command.high_frequency)));
+
+  const bool triggers = value(command.left_trigger) || value(command.right_trigger);
+  if (triggers || route.trigger_rumble) {
+    route.sink(platf::gamepad_feedback_msg_t::make_rumble_triggers(
+        route.client_relative_index, value(command.left_trigger), value(command.right_trigger)));
+  }
+  route.trigger_rumble = triggers;
+}
+}  // namespace
+
 /// Sunshine entry point: allocate a virtual pad in `id.globalIndex`.
-int alloc_gamepad(int slot) {
+int alloc_gamepad(int slot, std::uint8_t client_relative_index, FeedbackSink feedback) {
   // OJD creates the pad on the first frame, so allocation only records intent.
   // A failure surfaces on the first update, which is where OJD reports
   // permission and license problems.
@@ -52,11 +95,38 @@ int alloc_gamepad(int slot) {
   if (slot < 0 || slot >= kMaxVirtualPads) {
     return -1;
   }
+
+  // Installing the handler rebuilds the bridge's pad pool, so do it once, before
+  // the first update creates any pads. Pads without a sink drop their rumble.
+  std::call_once(rumble_handler_once, []() { global_bridge().set_rumble_handler(forward_rumble); });
+
+  std::lock_guard lock(route_mutex);
+  routes[slot] = FeedbackRoute{true, client_relative_index, std::move(feedback), false};
   return 0;
+}
+
+/// Sunshine entry point: route an existing pad's feedback to a resumed session.
+bool rebind_gamepad(int slot, std::uint8_t client_relative_index, FeedbackSink feedback) {
+  if (slot < 0 || slot >= kMaxVirtualPads) {
+    return false;
+  }
+  std::lock_guard lock(route_mutex);
+  auto &route = routes[slot];
+  if (!route.allocated) {
+    return false;
+  }
+  route.client_relative_index = client_relative_index;
+  route.sink = std::move(feedback);
+  route.trigger_rumble = false;
+  return true;
 }
 
 /// Sunshine entry point: release a virtual pad.
 void free_gamepad(int slot) {
+  if (slot >= 0 && slot < kMaxVirtualPads) {
+    std::lock_guard lock(route_mutex);
+    routes[slot] = FeedbackRoute{};
+  }
   global_bridge().release(slot);
 }
 
@@ -67,18 +137,9 @@ bool submit_gamepad(int slot, const platf::gamepad_state_t &state) {
       state.lsX, state.lsY, state.rsX, state.rsY);
 }
 
-// Rumble is intentionally not wired to Sunshine's feedback queue yet.
-//
-// The obstacle is scope, not protocol: OJD reports rumble per pad, and the
-// protocol layer parses it correctly, but Sunshine has one feedback queue per
-// Moonlight session while these pads are process-global. The bridge therefore
-// cannot tell which session owns a pad, and with several viewers connected a
-// rumble for one player would be delivered to another (or to a queue that was
-// already destroyed when its client disconnected).
-//
-// Wiring it safely needs the bridge to learn each session's gamepad slots and
-// queue, which means plumbing session identity through the platform input
-// entry points. Until that exists, rumble stays off for every pad rather than
-// routed to the wrong controller. See COLLABORATION.md.
+// Rumble goes back only to the session that owns the pad: alloc_gamepad() and
+// rebind_gamepad() record each slot's feedback queue and client-relative index,
+// the same routing libvirtualhid pads get. It stays off unless the caller passes
+// a sink (Sunshine's `ojd_rumble` option).
 
 }  // namespace nexus::ojd::sunshine

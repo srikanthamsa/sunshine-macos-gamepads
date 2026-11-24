@@ -309,6 +309,7 @@ namespace config {
     std::string gamepad_driver;  ///< Virtual gamepad backend policy on Windows and macOS.
     std::string ojd_socket_path;  ///< OpenJoystickDriver endpoint socket path; empty disables the OJD backend.
     std::string ojd_token;  ///< OpenJoystickDriver endpoint token with the control scope.
+    bool ojd_rumble;  ///< Forward rumble from OpenJoystickDriver pads to the Moonlight client.
     bool ds4_back_as_touchpad_click;  ///< Map Back/Select to touchpad click for PlayStation-style gamepads.
     bool motion_as_ds4;  ///< Prefer PlayStation-style emulation for client gamepads with motion controls.
     bool touchpad_as_ds4;  ///< Prefer PlayStation-style emulation for client gamepads with touchpad input.

@@ -425,6 +425,32 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
 </table>
 
+### ojd_rumble
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Forward rumble from OpenJoystickDriver virtual gamepads to the Moonlight client. Each pad's
+            rumble goes only to the client that owns it. When a game's rumble carries a duration, the
+            motors are stopped once it runs out, as a physical controller would.
+            @note{Applies only to the OpenJoystickDriver backend on macOS (`ojd_socket_path` and `ojd_token` set).}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            ojd_rumble = enabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### ds4_back_as_touchpad_click
 
 <table>

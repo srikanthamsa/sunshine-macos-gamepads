@@ -1,6 +1,7 @@
 #include "nexus/ojd/pad_session.hpp"
 
 #include <algorithm>
+#include <optional>
 
 namespace nexus::ojd {
 
@@ -33,8 +34,6 @@ ConnectResult PadSession::start() {
       return {};
     }
     stop_requested_ = false;
-    needs_full_frame_ = true;
-    published_ = GamepadState{};
   }
 
   FeedConfig feed;
@@ -103,7 +102,6 @@ bool PadSession::reconnect_locked() {
       last_error_ = ConnectError::none;
       running_ = true;
       has_pending_ = false;
-      published_ = GamepadState{};
       return true;
     }
 
@@ -126,6 +124,12 @@ bool PadSession::reconnect_locked() {
 }
 
 void PadSession::read_rumble() {
+  using clock = std::chrono::steady_clock;
+  // A SetRumble carries how long the motors should run. A real pad stops on its
+  // own when that runs out, but the client forwarding this (Moonlight) keeps
+  // rumbling until told otherwise, so synthesize the stop if nothing newer came.
+  std::optional<clock::time_point> expires;
+
   while (true) {
     {
       std::lock_guard lock(mutex_);
@@ -134,9 +138,30 @@ void PadSession::read_rumble() {
       }
     }
 
-    const auto command = client_.wait_for_rumble(std::chrono::milliseconds(100));
+    auto timeout = std::chrono::milliseconds(100);
+    if (expires) {
+      const auto left =
+          std::chrono::ceil<std::chrono::milliseconds>(*expires - clock::now());
+      timeout = std::clamp(left, std::chrono::milliseconds(1), timeout);
+    }
+
+    const auto command = client_.wait_for_rumble(timeout);
     if (!command) {
+      if (expires && clock::now() >= *expires) {
+        expires.reset();
+        if (config_.on_rumble) {
+          config_.on_rumble(slot_, RumbleCommand{});
+        }
+      }
       continue;
+    }
+
+    const bool running = command->set && (command->low_frequency || command->high_frequency ||
+                                          command->left_trigger || command->right_trigger);
+    if (running && command->duration_milliseconds > 0) {
+      expires = clock::now() + std::chrono::milliseconds(command->duration_milliseconds);
+    } else {
+      expires.reset();
     }
     if (config_.on_rumble) {
       config_.on_rumble(slot_, *command);
@@ -164,7 +189,6 @@ void PadSession::run() {
   while (true) {
     GamepadState state;
     bool send = false;
-    bool full = false;
     bool keepalive = false;
 
     {
@@ -187,8 +211,6 @@ void PadSession::run() {
       if (has_pending_) {
         state = pending_;
         has_pending_ = false;
-        full = needs_full_frame_;
-        needs_full_frame_ = false;
         send = true;
       } else if (now - last_send >= config_.keepalive_after) {
         keepalive = true;
@@ -196,25 +218,22 @@ void PadSession::run() {
     }
 
     if (send) {
-      Frame frame = full ? full_frame(state) : diff_frame(published_, state);
+      // OJD treats an omitted control as neutral, so every frame carries the whole
+      // state. A diff would drop a held stick axis whenever the other axis moved.
+      Frame frame = full_frame(state);
       if (!client_.send_frame(frame)) {
         if (!reconnect_locked()) {
           break;
         }
-        // The feed is back: republish absolute state so the new pad matches the
-        // physical controller instead of waiting for the next button change.
-        needs_full_frame_ = true;
         last_send = std::chrono::steady_clock::now();
         continue;
       }
-      published_ = state;
       last_send = std::chrono::steady_clock::now();
     } else if (keepalive) {
       if (!client_.send_keepalive()) {
         if (!reconnect_locked()) {
           break;
         }
-        needs_full_frame_ = true;
         last_send = std::chrono::steady_clock::now();
         continue;
       }

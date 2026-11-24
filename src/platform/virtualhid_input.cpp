@@ -1200,6 +1200,19 @@ namespace platf {
   }
 
 #ifndef _WIN32
+#if defined(__APPLE__)
+  /// Rumble route for an OJD pad: the session's feedback queue when `ojd_rumble`
+  /// is on, otherwise nothing, so the pad's rumble is dropped.
+  static nexus::ojd::sunshine::FeedbackSink ojd_feedback_sink(const feedback_queue_t &feedback_queue) {
+    if (!config::input.ojd_rumble || !feedback_queue) {
+      return {};
+    }
+    return [feedback_queue](const gamepad_feedback_msg_t &message) {
+      feedback_queue->raise(message);
+    };
+  }
+#endif
+
   int alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
 #if defined(__APPLE__)
     // Prefer OJD when it is configured. Everything the app needs (socket path and
@@ -1212,8 +1225,9 @@ namespace platf {
 
     if (nexus::ojd::sunshine::global_bridge().availability() ==
         nexus::ojd::sunshine::Availability::ready) {
-      if (nexus::ojd::sunshine::alloc_gamepad(id.globalIndex) == 0) {
-        BOOST_LOG(info) << "Gamepad "sv << id.globalIndex << " uses the OpenJoystickDriver backend"sv;
+      if (nexus::ojd::sunshine::alloc_gamepad(id.globalIndex, id.clientRelativeIndex, ojd_feedback_sink(feedback_queue)) == 0) {
+        BOOST_LOG(info) << "Gamepad "sv << id.globalIndex << " uses the OpenJoystickDriver backend"sv
+                        << (config::input.ojd_rumble ? " with rumble"sv : ""sv);
         return 0;
       }
     }
@@ -1222,6 +1236,13 @@ namespace platf {
   }
 
   int rebind_gamepad(input_t &input, const gamepad_id_t &id, feedback_queue_t feedback_queue) {
+#if defined(__APPLE__)
+    // An OJD pad isn't in libvirtualhid's list, so without this a resumed session
+    // failed the rebind and lost the controller's slot.
+    if (nexus::ojd::sunshine::rebind_gamepad(id.globalIndex, id.clientRelativeIndex, ojd_feedback_sink(feedback_queue))) {
+      return 0;
+    }
+#endif
     return virtualhid::rebind_gamepad(virtualhid::get_input_context(input), id, std::move(feedback_queue));
   }
 

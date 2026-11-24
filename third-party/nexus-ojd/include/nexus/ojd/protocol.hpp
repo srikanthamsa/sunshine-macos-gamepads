@@ -4,7 +4,7 @@
 // the documented single-line JSON form, which keeps this testable and lets the
 // transport stay trivial.
 //
-// Reference: OJD docs/sdk/endpoint.md, apiVersion openjoystickdriver/v1alpha2.
+// Reference: OJD docs/sdk/endpoint.md, apiVersion openjoystickdriver/v1alpha3.
 #pragma once
 
 #include <cstddef>
@@ -22,7 +22,7 @@ struct Reply;
 
 /// The only endpoint version this client speaks. OJD accepts exactly the values
 /// it lists in details.supportedAPIVersions; an alpha may bump this.
-inline constexpr std::string_view kApiVersion{"openjoystickdriver/v1alpha2"};
+inline constexpr std::string_view kApiVersion{"openjoystickdriver/v1alpha3"};
 
 /// Virtual gamepad personas OJD can present. They name no operating system.
 enum class Persona {
